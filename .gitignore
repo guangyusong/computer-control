@@ -1,0 +1,12 @@
+node_modules/
+.build/
+dist/
+.env
+.openai
+.DS_Store
+npm-debug.log*
+*.log
+*.trace
+*.xcresult/
+DerivedData/
+screenshots/

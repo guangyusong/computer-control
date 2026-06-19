@@ -1,0 +1,20 @@
+{
+  "name": "computer-control",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "bash script/check.sh",
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "browser-agent": "node script/browser-agent.mjs",
+    "browser-agent:self-test": "node script/browser-agent.mjs --self-test",
+    "chrome-live:status": "node script/chrome-live-agent.mjs --status",
+    "chrome-live:self-test": "node script/chrome-live-agent.mjs --self-test"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "openai": "^6.42.0",
+    "playwright": "^1.60.0"
+  }
+}

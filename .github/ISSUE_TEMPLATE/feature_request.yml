@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a capability or workflow
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow should this improve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the behavior and expected safety boundary.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Realtime voice
+        - Native macOS control
+        - Live Chrome
+        - Managed browser
+        - Visual Computer Use
+        - UI/history/settings
+    validations:
+      required: true

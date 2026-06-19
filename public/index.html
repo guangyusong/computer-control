@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Computer Control</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <div class="topbar">
+          <div>
+            <h1>Computer Control</h1>
+            <p id="status">Mic disconnected</p>
+          </div>
+          <div class="actions">
+            <button id="connectButton" type="button">Connect mic</button>
+            <button id="openExternalButton" type="button">Open in browser</button>
+            <button id="disconnectButton" type="button" disabled>Disconnect</button>
+          </div>
+        </div>
+
+        <div class="commandRow">
+          <input
+            id="textCommand"
+            type="text"
+            autocomplete="off"
+            placeholder="open Calculator"
+          />
+          <button id="sendButton" type="button">Send</button>
+        </div>
+
+        <div class="grid">
+          <section class="surface">
+            <h2>Transcript</h2>
+            <div id="transcript" class="transcript" aria-live="polite"></div>
+          </section>
+
+          <section class="surface">
+            <h2>Actions</h2>
+            <div id="actionLog" class="actionLog" aria-live="polite"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Computer Control Live Chrome",
+  "description": "Companion extension for the Computer Control native prototype.",
+  "version": "0.1.0",
+  "permissions": ["activeTab", "alarms", "scripting", "tabs"],
+  "host_permissions": ["http://127.0.0.1:38433/*", "http://localhost:38433/*", "<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Computer Control Live Chrome",
+    "default_popup": "popup.html"
+  }
+}
