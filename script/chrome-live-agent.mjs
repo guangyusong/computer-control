@@ -29,6 +29,12 @@ async function main() {
       return;
     }
 
+    if (process.argv.includes("--context")) {
+      const result = await contextCheck();
+      writeResult(result);
+      return;
+    }
+
     const request = await readRequest();
     const goal = String(request.text || request.goal || "").trim();
     if (!goal) {
@@ -100,6 +106,38 @@ async function statusCheck() {
     spokenText: "Live Chrome is connected.",
     detail: `Chrome extension connected. ${count} open tab${count === 1 ? "" : "s"} visible to the bridge.`,
     steps: ["Live Chrome extension polled the bridge.", `Open tabs detected: ${count}.`],
+  });
+}
+
+async function contextCheck() {
+  const connected = await waitForExtension(3000);
+  if (!connected) return extensionMissingResult();
+
+  const steps = ["Live Chrome extension polled the bridge."];
+  const snapshot = await sendCommand("chrome_snapshot", {}, 5000).catch(async (error) => {
+    steps.push(`Active tab snapshot unavailable: ${errorMessage(error)}.`);
+    const tabs = await sendCommand("chrome_open_tabs", {}, 3000).catch(() => ({ tabs: [] }));
+    const activeTab = (tabs.tabs || []).find((tab) => tab.active) || (tabs.tabs || [])[0] || {};
+    return {
+      title: activeTab.title || "",
+      url: activeTab.url || "",
+      text: "",
+      accessibility: "",
+    };
+  });
+
+  const title = snapshot.title || titleFromURL(snapshot.url) || "Chrome";
+  const url = snapshot.url || "";
+  steps.push(url ? `Active Chrome tab: ${title} (${url}).` : `Active Chrome tab: ${title}.`);
+
+  return okResult({
+    spokenText: "Active Chrome context ready.",
+    detail: url ? `${title} - ${url}` : title,
+    steps,
+    finalURL: url,
+    contextKind: "browser",
+    contextTitle: title,
+    contextSource: "Live Chrome",
   });
 }
 
@@ -226,6 +264,13 @@ async function runModelChromeTask({ goal, url, maxSteps }) {
   if (url) {
     const nav = await sendCommand("chrome_navigate", { url: normalizeURL(url) }, 8000);
     steps.push(`Navigated to ${nav.url || url}.`);
+  } else {
+    const context = await sendCommand("chrome_snapshot", {}, 5000).catch(() => null);
+    if (context?.url) {
+      steps.push(`Continuing active Chrome tab: ${context.title || context.url}.`);
+    } else {
+      steps.push("No start URL supplied; using the current active Chrome tab.");
+    }
   }
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -378,6 +423,8 @@ function tool(name, description, properties, required) {
 function chromeInstructions() {
   return `
 You control the user's already-running Chrome through a constrained extension bridge.
+If no URL is supplied, continue in the currently claimed or active Chrome tab. Do not open a new tab unless the user explicitly asks or the current page is clearly unrelated.
+For ambiguous follow-ups like "this address", "that page", "continue", "look it up", "click that", or "fill this", inspect and use the current tab first.
 Prefer chrome_snapshot before choosing selectors unless the next action is obvious.
 Do not inspect cookies, local storage, passwords, or session stores.
 Never click Send, Buy, Delete, Confirm, Submit, or other high-impact controls. Stop and ask for confirmation instead.
@@ -523,7 +570,7 @@ function writeResult(result) {
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
-function okResult({ spokenText, detail, steps, finalURL, screenshotPath }) {
+function okResult({ spokenText, detail, steps, finalURL, screenshotPath, contextKind, contextTitle, contextSource }) {
   return {
     ok: true,
     spokenText,
@@ -531,6 +578,9 @@ function okResult({ spokenText, detail, steps, finalURL, screenshotPath }) {
     steps: steps || [],
     finalURL: finalURL || "",
     screenshotPath: screenshotPath || null,
+    contextKind: contextKind || null,
+    contextTitle: contextTitle || null,
+    contextSource: contextSource || null,
   };
 }
 
@@ -542,7 +592,18 @@ function blockedResult(spokenText, detail, steps = [], finalURL = "") {
     steps,
     finalURL,
     screenshotPath: null,
+    contextKind: null,
+    contextTitle: null,
+    contextSource: null,
   };
+}
+
+function titleFromURL(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
 }
 
 function functionCalls(response) {

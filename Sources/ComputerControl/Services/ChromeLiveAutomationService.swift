@@ -6,6 +6,7 @@ import Observation
 final class ChromeLiveAutomationService {
     var status: ChromeLiveStatus = .unknown
     var statusDetail = "Not checked yet."
+    var activeContext: ActiveWorkspaceContext?
 
     private var currentProcess: Process?
     private let bridgePort = 38433
@@ -41,6 +42,43 @@ final class ChromeLiveAutomationService {
         }
     }
 
+    func refreshActiveContext() async -> ActiveWorkspaceContext? {
+        guard status != .running else {
+            return activeContext
+        }
+        guard status == .connected else {
+            return activeContext
+        }
+
+        do {
+            let result = try await runBridge(arguments: ["--context"], payload: nil, timeout: 6)
+            if result.ok {
+                status = .connected
+                statusDetail = result.detail
+                let context = ActiveWorkspaceContext(
+                    kind: WorkspaceSurfaceKind(rawValue: result.contextKind ?? "") ?? .browser,
+                    source: result.contextSource ?? "Live Chrome",
+                    appName: "Google Chrome",
+                    title: result.contextTitle,
+                    url: result.finalURL,
+                    detail: result.detail
+                )
+                activeContext = context
+                return context
+            }
+
+            if result.detail.localizedCaseInsensitiveContains("companion extension") {
+                status = .missing
+                statusDetail = result.detail
+            }
+        } catch {
+            status = .missing
+            statusDetail = error.localizedDescription
+        }
+
+        return activeContext
+    }
+
     func run(goal: String, url: String?, maxSteps: Int?) async throws -> BrowserAutomationResult {
         let request = BrowserAutomationRequest(
             text: goal,
@@ -62,6 +100,17 @@ final class ChromeLiveAutomationService {
         let result = try await runBridge(arguments: [], payload: payload, timeout: 180)
         status = result.detail.localizedCaseInsensitiveContains("companion extension") ? .missing : .connected
         statusDetail = result.detail
+        if result.ok {
+            activeContext = ActiveWorkspaceContext(
+                kind: WorkspaceSurfaceKind(rawValue: result.contextKind ?? "") ?? .browser,
+                source: result.contextSource ?? "Live Chrome",
+                appName: "Google Chrome",
+                title: result.contextTitle,
+                url: result.finalURL,
+                detail: result.detail,
+                lastGoal: goal
+            )
+        }
         return result
     }
 

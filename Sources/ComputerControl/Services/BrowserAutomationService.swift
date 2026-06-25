@@ -16,6 +16,9 @@ struct BrowserAutomationResult: Decodable {
     var steps: [String]
     var finalURL: String?
     var screenshotPath: String?
+    var contextKind: String?
+    var contextTitle: String?
+    var contextSource: String?
 }
 
 @MainActor

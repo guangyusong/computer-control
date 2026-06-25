@@ -27,13 +27,13 @@ final class OpenAIPlannerService {
 
     private let endpoint = URL(string: "https://api.openai.com/v1/responses")!
 
-    func plan(command: String) async -> PlannedAction {
+    func plan(command: String, context: ActiveWorkspaceContext? = nil) async -> PlannedAction {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return .unsupported("Tell me what you want me to do.", rationale: "Empty command.")
         }
 
-        if let deterministicPlan = deterministicPlan(for: trimmed) {
+        if let deterministicPlan = deterministicPlan(for: trimmed, context: context) {
             lastError = nil
             lastPlan = deterministicPlan
             return deterministicPlan
@@ -44,7 +44,7 @@ final class OpenAIPlannerService {
         defer { isPlanning = false }
 
         do {
-            let action = try await requestPlan(command: trimmed)
+            let action = try await requestPlan(command: trimmed, context: context)
             lastPlan = action
             return action
         } catch {
@@ -56,7 +56,7 @@ final class OpenAIPlannerService {
         }
     }
 
-    private func requestPlan(command: String) async throws -> PlannedAction {
+    private func requestPlan(command: String, context: ActiveWorkspaceContext?) async throws -> PlannedAction {
         guard let key = OpenAIConfiguration.apiKey() else {
             throw PlannerError.missingAPIKey
         }
@@ -66,7 +66,7 @@ final class OpenAIPlannerService {
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(OpenAIConfiguration.safetyIdentifier(), forHTTPHeaderField: "OpenAI-Safety-Identifier")
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody(command: command))
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody(command: command, context: context))
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -81,8 +81,20 @@ final class OpenAIPlannerService {
         return try JSONDecoder().decode(PlannedAction.self, from: outputData)
     }
 
-    private func requestBody(command: String) -> [String: Any] {
-        [
+    private func requestBody(command: String, context: ActiveWorkspaceContext?) -> [String: Any] {
+        let userText: String
+        if let context {
+            userText = """
+            \(context.promptSummary)
+
+            User request:
+            \(command)
+            """
+        } else {
+            userText = command
+        }
+
+        return [
             "model": ProcessInfo.processInfo.environment["OPENAI_PLANNER_MODEL"] ?? "gpt-4o-mini",
             "store": false,
             "input": [
@@ -100,7 +112,7 @@ final class OpenAIPlannerService {
                     "content": [
                         [
                             "type": "input_text",
-                            "text": command
+                            "text": userText
                         ]
                     ]
                 ]
@@ -139,6 +151,7 @@ final class OpenAIPlannerService {
         - speak: answer verbally without changing the computer.
         - unsupported: use when the request asks for unavailable or unsafe capabilities such as bypassing authentication, CAPTCHAs, purchases, or sending/submitting sensitive data without confirmation.
         Do not claim an action already happened. Return the next native action only.
+        Use the current active workspace context when provided. For ambiguous follow-ups like "this", "here", "that page", "continue", "look up this address", "click that", or "fill this", prefer continuing in the active workspace. Do not open a new browser tab or app unless the user explicitly asks for a new one or the current workspace is clearly irrelevant.
         For run_browser_task, use browserBackend "live_chrome" for Gmail, web pages, page clicks, and the user's running/logged-in Chrome. Use browserBackend "managed" only when the user explicitly asks for an isolated managed browser fallback.
         Keep browserProfileMode for compatibility: set it to "existing_chrome" when browserBackend is "live_chrome", and "managed" when browserBackend is "managed".
         Prefer app/browser/Accessibility actions before raw coordinate actions. Use risk "safe" for observation/opening/navigation, "confirm" for typing, clicking, quitting, forms, or messages, and "blocked" for unsupported.
@@ -149,8 +162,16 @@ final class OpenAIPlannerService {
         PlannedAction.jsonSchema
     }
 
-    private func deterministicPlan(for command: String) -> PlannedAction? {
+    private func deterministicPlan(for command: String, context: ActiveWorkspaceContext?) -> PlannedAction? {
         let normalized = normalizedCommand(command)
+
+        if shouldContinueInActiveBrowser(normalized, context: context) {
+            return browserTaskPlan(
+                command,
+                useInitialURL: false,
+                rationale: "The request is an ambiguous follow-up, so it should continue in the active Chrome tab."
+            )
+        }
 
         if isBrowserAutomationRequest(normalized) {
             return browserTaskPlan(command, rationale: "Browser page interaction should use Live Chrome when the extension is connected.")
@@ -265,13 +286,13 @@ final class OpenAIPlannerService {
         )
     }
 
-    private func browserTaskPlan(_ command: String, rationale: String) -> PlannedAction {
+    private func browserTaskPlan(_ command: String, useInitialURL: Bool = true, rationale: String) -> PlannedAction {
         let normalized = normalizedCommand(command)
         let backend = browserBackend(for: normalized)
         let profileMode = backend == "live_chrome" ? "existing_chrome" : "managed"
         return .make(
             action: .runBrowserTask,
-            url: browserInitialURL(for: normalized),
+            url: useInitialURL ? browserInitialURL(for: normalized) : nil,
             text: command,
             maxSteps: 12,
             browserBackend: backend,
@@ -328,6 +349,56 @@ final class OpenAIPlannerService {
             "existing profile",
             "current profile",
             "logged in profile"
+        ])
+    }
+
+    private func shouldContinueInActiveBrowser(_ normalized: String, context: ActiveWorkspaceContext?) -> Bool {
+        guard context?.isBrowser == true else { return false }
+
+        if containsAny(normalized, [
+            "new tab",
+            "open a new tab",
+            "open new tab",
+            "new window",
+            "fresh tab",
+            "start fresh",
+            "go to gmail",
+            "open gmail",
+            "go to google",
+            "open google"
+        ]) {
+            return false
+        }
+
+        return containsAny(normalized, [
+            "this address",
+            "that address",
+            "the address",
+            "this listing",
+            "that listing",
+            "this property",
+            "that property",
+            "this page",
+            "that page",
+            "current page",
+            "current tab",
+            "on this page",
+            "on the page",
+            "look up this",
+            "look this up",
+            "look up the address",
+            "search this",
+            "check this",
+            "continue",
+            "keep going",
+            "use this",
+            "use the current",
+            "click that",
+            "click this",
+            "fill this",
+            "fill that",
+            "scroll this",
+            "read this"
         ])
     }
 

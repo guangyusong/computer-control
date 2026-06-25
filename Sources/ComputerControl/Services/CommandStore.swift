@@ -13,6 +13,7 @@ final class CommandStore {
     var currentCommand = ""
     var sessions: [ControlSession]
     var currentSessionID: UUID
+    var activeWorkspaceContext: ActiveWorkspaceContext?
 
     var tools: [ToolCapability] = [
         ToolCapability(
@@ -197,6 +198,7 @@ final class CommandStore {
         let session = ControlSession(title: "New Session")
         sessions.insert(session, at: 0)
         currentSessionID = session.id
+        activeWorkspaceContext = nil
         trimSessions()
         persistSessions()
         recordActivity(
@@ -217,6 +219,18 @@ final class CommandStore {
 
     func continueSession(_ sessionID: UUID) {
         selectSession(sessionID)
+    }
+
+    func updateActiveWorkspace(_ context: ActiveWorkspaceContext?) {
+        activeWorkspaceContext = context
+    }
+
+    func noteWorkspaceGoal(_ goal: String?) {
+        guard var context = activeWorkspaceContext else { return }
+        let trimmed = goal?.trimmingCharacters(in: .whitespacesAndNewlines)
+        context.lastGoal = trimmed?.isEmpty == false ? trimmed : context.lastGoal
+        context.updatedAt = Date()
+        activeWorkspaceContext = context
     }
 
     @discardableResult
