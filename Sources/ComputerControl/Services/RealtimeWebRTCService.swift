@@ -47,6 +47,7 @@ final class RealtimeWebRTCService {
     var audioStatus = "WebRTC audio idle"
     var inputAudioStatus = "Mic off"
     var interactionMode: RealtimeInteractionMode = .webRTC
+    var workspaceContext: ActiveWorkspaceContext?
 
     private weak var webView: WKWebView?
     private var isBridgeReady = false
@@ -202,6 +203,25 @@ final class RealtimeWebRTCService {
         guard interactionMode != mode else { return }
         interactionMode = mode
         activityRecorder?("Audio mode", "\(mode.title): \(mode.detail)", .safe)
+    }
+
+    func setWorkspaceContext(_ context: ActiveWorkspaceContext?) async {
+        workspaceContext = context
+        guard isConnected else { return }
+
+        do {
+            try await send(event: [
+                "type": "session.update",
+                "session": [
+                    "instructions": realtimeInstructions
+                ]
+            ])
+            if let context {
+                activityRecorder?("Workspace context", context.promptSummary, .safe)
+            }
+        } catch {
+            activityRecorder?("Workspace context blocked", error.localizedDescription, .confirm)
+        }
     }
 
     func stopAssistantAndCancelAction() async {
@@ -593,6 +613,19 @@ final class RealtimeWebRTCService {
         Do not say a computer action happened until the tool result says ok is true.
         If the user asks to send, submit, purchase, authenticate, delete, or expose sensitive data, ask for confirmation before taking the write action.
         Do not invent permission state. If typing or keyboard control is blocked, explain that Accessibility permission is needed.
+        \(workspaceInstructions)
+        """
+    }
+
+    private var workspaceInstructions: String {
+        guard let workspaceContext else {
+            return "No active workspace context is currently known. If the user uses ambiguous language, inspect the current app, browser tab, or screen before opening a new workspace."
+        }
+
+        return """
+
+        \(workspaceContext.promptSummary)
+        Prefer continuing in this workspace for ambiguous follow-ups. If you need browser page context, call run_browser_task with browserBackend live_chrome and no URL so it uses the active tab.
         """
     }
 

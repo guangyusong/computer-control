@@ -4,6 +4,7 @@ struct CommandComposerView: View {
     @Environment(CommandStore.self) private var commands
     @Environment(SpeechStore.self) private var speech
     @Environment(AppActionService.self) private var actions
+    @Environment(ChromeLiveAutomationService.self) private var chromeLive
     @Environment(OpenAIPlannerService.self) private var planner
     @Environment(RealtimeWebRTCService.self) private var realtime
 
@@ -71,16 +72,20 @@ struct CommandComposerView: View {
 
     private func execute(_ command: String) async {
         if realtime.isConnected {
+            await refreshWorkspaceContext()
+            await realtime.setWorkspaceContext(commands.activeWorkspaceContext)
             commands.recordActivity(title: "Sent to Realtime", detail: command, status: .safe, kind: .queued, source: "Realtime")
             await realtime.sendTextCommand(command)
             return
         }
 
-        let plan = await planner.plan(command: command)
+        await refreshWorkspaceContext()
+        let plan = await planner.plan(command: command, context: commands.activeWorkspaceContext)
         let source = commands.actionSource(for: plan)
         commands.recordActivity(title: "Planned \(plan.action.rawValue)", detail: plan.rationale, status: risk(for: plan), kind: .planned, source: source)
         commands.recordActivity(title: "Running \(plan.action.rawValue)", detail: plan.spokenText, status: .confirm, kind: .running, source: source)
         let result = await actions.execute(plan: plan, safetyMode: commands.safetyMode)
+        await refreshWorkspaceContextIfNeeded(after: plan, result: result, goal: command)
         commands.recordActivity(
             title: result.succeeded ? "Manual command executed" : "Manual command blocked",
             detail: result.detail,
@@ -89,6 +94,30 @@ struct CommandComposerView: View {
             source: source
         )
         speech.speak(result.spokenText)
+    }
+
+    private func refreshWorkspaceContext() async {
+        guard let context = await chromeLive.refreshActiveContext() else { return }
+        commands.updateActiveWorkspace(context)
+    }
+
+    private func refreshWorkspaceContextIfNeeded(after plan: PlannedAction, result: ActionResult, goal: String) async {
+        guard result.succeeded else { return }
+        guard shouldRefreshWorkspace(after: plan) else { return }
+        if let context = await chromeLive.refreshActiveContext() {
+            commands.updateActiveWorkspace(context)
+        }
+        commands.noteWorkspaceGoal(goal)
+        await realtime.setWorkspaceContext(commands.activeWorkspaceContext)
+    }
+
+    private func shouldRefreshWorkspace(after plan: PlannedAction) -> Bool {
+        switch plan.action {
+        case .runBrowserTask, .openURL, .newTab, .browserBack, .browserForward, .switchTab, .findTab:
+            true
+        default:
+            false
+        }
     }
 
     private func risk(for plan: PlannedAction) -> ToolRisk {

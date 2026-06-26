@@ -116,9 +116,13 @@ struct ContentView: View {
             return
         }
 
+        await refreshWorkspaceContext()
+        await realtime.setWorkspaceContext(commands.activeWorkspaceContext)
         await realtime.connect(
             toolExecutor: { plan in
-                await actions.execute(plan: plan, safetyMode: commands.safetyMode)
+                let result = await actions.execute(plan: plan, safetyMode: commands.safetyMode)
+                await refreshWorkspaceContextIfNeeded(after: plan, result: result, goal: plan.text)
+                return result
             },
             actionCanceller: { reason in
                 actions.cancelCurrentAction(reason: reason)
@@ -163,11 +167,13 @@ struct ContentView: View {
     private func handleRecognizedCommand(_ command: String) async {
         guard !command.isEmpty else { return }
         commands.recordActivity(title: "Voice transcript", detail: command, status: .safe, kind: .transcript, source: "Voice")
-        let plan = await planner.plan(command: command)
+        await refreshWorkspaceContext()
+        let plan = await planner.plan(command: command, context: commands.activeWorkspaceContext)
         let source = commands.actionSource(for: plan)
         commands.recordActivity(title: "Planned \(plan.action.rawValue)", detail: plan.rationale, status: risk(for: plan), kind: .planned, source: source)
         commands.recordActivity(title: "Running \(plan.action.rawValue)", detail: plan.spokenText, status: .confirm, kind: .running, source: source)
         let result = await actions.execute(plan: plan, safetyMode: commands.safetyMode)
+        await refreshWorkspaceContextIfNeeded(after: plan, result: result, goal: command)
         commands.recordActivity(
             title: result.succeeded ? "Voice command executed" : "Voice command blocked",
             detail: result.detail,
@@ -176,6 +182,31 @@ struct ContentView: View {
             source: source
         )
         speech.speak(result.spokenText)
+    }
+
+    private func refreshWorkspaceContext() async {
+        guard let context = await chromeLive.refreshActiveContext() else { return }
+        commands.updateActiveWorkspace(context)
+        await realtime.setWorkspaceContext(context)
+    }
+
+    private func refreshWorkspaceContextIfNeeded(after plan: PlannedAction, result: ActionResult, goal: String?) async {
+        guard result.succeeded else { return }
+        guard shouldRefreshWorkspace(after: plan) else { return }
+        if let context = await chromeLive.refreshActiveContext() {
+            commands.updateActiveWorkspace(context)
+        }
+        commands.noteWorkspaceGoal(goal)
+        await realtime.setWorkspaceContext(commands.activeWorkspaceContext)
+    }
+
+    private func shouldRefreshWorkspace(after plan: PlannedAction) -> Bool {
+        switch plan.action {
+        case .runBrowserTask, .openURL, .newTab, .browserBack, .browserForward, .switchTab, .findTab:
+            true
+        default:
+            false
+        }
     }
 
     private func risk(for plan: PlannedAction) -> ToolRisk {

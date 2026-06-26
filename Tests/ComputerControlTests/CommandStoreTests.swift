@@ -77,6 +77,43 @@ final class CommandStoreTests: XCTestCase {
         XCTAssertNotNil(ActionSafetyPolicy.blockedReason(for: plan, safetyMode: .powerUser))
     }
 
+    func testNewSessionClearsActiveWorkspaceContext() {
+        let store = makeStore()
+        store.updateActiveWorkspace(
+            ActiveWorkspaceContext(
+                kind: .browser,
+                source: "Live Chrome",
+                appName: "Google Chrome",
+                title: "100 University Ave - Realtor.ca",
+                url: "https://www.realtor.ca/"
+            )
+        )
+
+        XCTAssertNotNil(store.activeWorkspaceContext)
+        store.startNewSession()
+        XCTAssertNil(store.activeWorkspaceContext)
+    }
+
+    @MainActor
+    func testPlannerContinuesAmbiguousAddressRequestInActiveBrowser() async {
+        let planner = OpenAIPlannerService()
+        let context = ActiveWorkspaceContext(
+            kind: .browser,
+            source: "Live Chrome",
+            appName: "Google Chrome",
+            title: "100 University Ave - Realtor.ca",
+            url: "https://www.realtor.ca/real-estate/123/100-university-avenue"
+        )
+
+        let plan = await planner.plan(command: "Can you look up this address?", context: context)
+
+        XCTAssertEqual(plan.action, .runBrowserTask)
+        XCTAssertEqual(plan.browserBackend, "live_chrome")
+        XCTAssertEqual(plan.browserProfileMode, "existing_chrome")
+        XCTAssertNil(plan.url)
+        XCTAssertTrue(plan.rationale.localizedCaseInsensitiveContains("active Chrome tab"))
+    }
+
     private func makeStore() -> CommandStore {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ComputerControlTests-\(UUID().uuidString)", isDirectory: true)

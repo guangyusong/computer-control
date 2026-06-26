@@ -101,6 +101,14 @@ struct ControlDashboardView: View {
             tint: chromeLive.isConnected ? .green : .orange,
             detail: chromeLive.statusDetail
         )
+        if let workspace = commands.activeWorkspaceContext {
+            StatusPill(
+                title: "Working in \(workspace.displayTitle)",
+                symbol: workspace.systemImage,
+                tint: workspace.tint,
+                detail: workspace.promptSummary
+            )
+        }
         StatusPill(
             title: commands.currentContextEstimate.level.title,
             symbol: commands.currentContextEstimate.level.systemImage,
@@ -237,9 +245,13 @@ struct ControlDashboardView: View {
             return
         }
 
+        await refreshWorkspaceContext()
+        await realtime.setWorkspaceContext(commands.activeWorkspaceContext)
         await realtime.connect(
             toolExecutor: { plan in
-                await actions.execute(plan: plan, safetyMode: commands.safetyMode)
+                let result = await actions.execute(plan: plan, safetyMode: commands.safetyMode)
+                await refreshWorkspaceContextIfNeeded(after: plan, result: result, goal: plan.text)
+                return result
             },
             actionCanceller: { reason in
                 actions.cancelCurrentAction(reason: reason)
@@ -253,6 +265,10 @@ struct ControlDashboardView: View {
     private func runDemoCheck() async {
         permissions.refresh()
         await chromeLive.refreshStatus()
+        if let context = await chromeLive.refreshActiveContext() {
+            commands.updateActiveWorkspace(context)
+            await realtime.setWorkspaceContext(context)
+        }
         commands.recordActivity(
             title: chromeLive.isConnected ? "Demo check passed" : "Chrome extension missing",
             detail: chromeLive.statusDetail,
@@ -260,6 +276,30 @@ struct ControlDashboardView: View {
             kind: chromeLive.isConnected ? .completed : .blocked,
             source: "Live Chrome"
         )
+    }
+
+    private func refreshWorkspaceContext() async {
+        guard let context = await chromeLive.refreshActiveContext() else { return }
+        commands.updateActiveWorkspace(context)
+    }
+
+    private func refreshWorkspaceContextIfNeeded(after plan: PlannedAction, result: ActionResult, goal: String?) async {
+        guard result.succeeded else { return }
+        guard shouldRefreshWorkspace(after: plan) else { return }
+        if let context = await chromeLive.refreshActiveContext() {
+            commands.updateActiveWorkspace(context)
+        }
+        commands.noteWorkspaceGoal(goal)
+        await realtime.setWorkspaceContext(commands.activeWorkspaceContext)
+    }
+
+    private func shouldRefreshWorkspace(after plan: PlannedAction) -> Bool {
+        switch plan.action {
+        case .runBrowserTask, .openURL, .newTab, .browserBack, .browserForward, .switchTab, .findTab:
+            true
+        default:
+            false
+        }
     }
 }
 
